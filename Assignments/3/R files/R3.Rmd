@@ -1,0 +1,114 @@
+---
+title: "High Diminsional Statistics-Sheet 3-Exercise 4"
+author: "Hamed Vaheb"
+date: "13/04/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(reshape2)
+library(readr)
+library(readxl)
+library(lasso2)
+library(glmnet)
+library(sjPlot)
+```
+
+## Prepare
+First of all we import the dataset:
+```{r}
+url <- "https://hastie.su.domains/ElemStatLearn/datasets/prostate.data"
+df <- read.table(url, sep = '\t', header = TRUE)
+df %>% head(10)
+```
+
+### Question 1
+Build the regression model for the variable prostate antigen (lpsa)
+
+```{r pressure, echo=FALSE}
+features <- df %>% select(!c(X,train,lpsa))
+model_lm <- lm(df$lpsa ~ . , data = features)
+summary(model_lm)
+```
+The estimators of $b_0$ and $b_j \in \{1,...,8\}$ are respectively: 
+```{r}
+coef(model_lm)
+```
+### Question 2 
+Build the regression model with L1-constraint on the parameters. Estimate then the co-
+efficients and plot them.
+
+#### Building the model
+```{r}
+#model_lasso <- l1ce(df$lpsa ~ . , data = features)
+model_lasso <- glmnet(features, df$lpsa, alpha = 1)
+model_lasso
+```
+
+#### Plotting the estimations of the coefficients for both linear model and lasso model
+```{r}
+plot_model(model_lm)
+```
+```{r}
+plot(model_lasso)
+```
+For $j \in {1,...,8}$ ith curve corresponds to jth variable. It shows the path of $b_j$ against the $\ell_1$-norm of the whole coefficient vector $b$ as $\lambda$ varies. The axis above indicates the number of nonzero coefficients at the current $\lambda$.
+
+
+## Question 3: 
+Report two values for $\lambda$ : "lambda.min" and "lambda.1se", where “lambda.min” is the
+$\lambda$ at which the smallest mean squared error (MSE) is achieved and “lambda.1se” is the
+largest $\lambda$ at which the MSE is within one standard error of the smallest MSE (default).
+Report the number of nonzero coefficients for the selected values of $\lambda$ and the corresponding estimated coefficients.
+
+
+### Perform k-fold cross-validation to find optimal lambda value
+```{r}
+
+X <- data.matrix(features)
+y <- df$lpsa
+cv_lasso <- cv.glmnet(X, y, alpha = 1)
+plot(cv_lasso) 
+```
+```{r}
+lambda_min = cv_lasso$lambda.min
+lambda_1se = cv_lasso$lambda.1se
+print(paste( "lambda.min = ",lambda_min))
+print(paste( "lambda.1se = ",lambda_1se))
+
+#lasso_model_min <- glmnet(features, y, alpha  = 1,lambda = #lambda_min)
+#obain number of non-zero coefficients
+#lasso_model_min$beta 
+#lasso_model_se <- glmnet(features, y=y, alpha = 1, lambda #=lambda_1se)
+#obain number of non-zero coefficients
+#lasso_model_se$beta
+#predict(lasso_model_min,type="coef")
+
+```
+```{r}
+coef.exact <- coef(model_lasso, s = c(lambda_min, lambda_1se), exact = TRUE)
+#predict(model_lasso, newx = X, s = c(lambda_min, lambda_1se))
+#coef.apprx <- coef(model_lasso, s = c(lambda_min, lambda_1se), exact = FALSE, x=X, y=y)
+#coef.apprx[which(coef.apprx != 0)]
+#coef.exact[which(coef.exact != 0)]
+
+coeffs <- predict(model_lasso, s = c(lambda_min, lambda_1se), type="coef")
+
+coeffs_s1 = coeffs[,1]
+coeffs_s2 = coeffs[,2]
+
+
+n1 <- coeffs_s1[which(coeffs_s1 != 0)] %>% length()
+n2 <- coeffs_s2[which(coeffs_s2 != 0)] %>% length()
+
+print(paste( "Number of non-zero coefficients for model with  lambdal.min = ",n1))
+print(paste( "Number of non-zero coefficients for model with  lambda.1se = ",n2))
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
