@@ -1,0 +1,229 @@
+---
+title: "High Diminsional Statistics-Sheet 4-Exercise 4"
+author: "Hamed Vaheb"
+date: "02/05/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(reshape2)
+library(readr)
+library(readxl)
+library(lasso2)
+library(glmnet)
+library(sjPlot)
+library(magrittr)
+library(glmnet)
+library(pROC)
+library(arulesCBA)
+```
+Use the same prostate dataset as in the last sheet, which can be found at this clickable [link](https://hastie.su.domains/ElemStatLearn/)
+
+We want to perform the regularization method known as Adaptive Lasso, which seeks to minimize
+
+$RSS(b) + \lambda \sum_{j=1}^{p} \hat{w}_j |b_j|,$
+
+where $RSS(b)$ is the residual sum of square of $b, \lambda$ is the tuning parameter (chosen through 10-fold cross validation), $b_j$ are the $p$ estimated coefficients and $\hat{w_j}$ are adaptive weights. We recall that
+
+$$\hat{w_j} = \frac{1}{(|b_{j}^{in}|)^\gamma},$$
+
+where $b_{j}^{in}$ is an initial estimate of the coefficients and $\gamma$ is a positive constant for adjustment of the adaptive weights.
+
+
+### Prepare
+First of all we import the dataset:
+```{r}
+url <- "https://hastie.su.domains/ElemStatLearn/datasets/prostate.data"
+df <- read.table(url, sep = '\t', header = TRUE)
+df %>% head(10)
+```
+
+### Question 1
+Build the regression model for the variable prostate antigen (lpsa. Use it to obtain the initial estimates of the coefficients $b_{j}^{in}$.
+
+
+At first we build the regression model:
+```{r pressure, echo=FALSE}
+features <- df %>% select(!c(X,train,lpsa))
+model_lm <- lm(df$lpsa ~ . , data = features)
+model_lasso <- glmnet(features, df$lpsa, alpha = 1)
+summary(model_lm)
+```
+The estimators of $b_0$ and $b_j \in \{1,...,8\}$ are respectively: 
+```{r}
+coef(model_lm)
+```
+Perform lasso regression with 10-fold cross validation to find the best $\lambda$, from which we will create the initial estimates the coefficients
+```{r}
+
+
+X <- data.matrix(features)
+y <- df$lpsa
+
+cv_lasso <- cv.glmnet(X, y,
+                       ## type.measure: loss to use for cross-validation.
+                       ## K = 10 is the default.
+                       nfold = 10,
+                       ## ‘alpha = 1’ is the lasso penalty, and ‘alpha = 0’ the ridge penalty.
+                       alpha = 1)
+## Penalty vs CV MSE plot
+```
+Store the coefficients of the lasso model in which we set $\lambda$ to be \verb|lambda.min| which is $\lambda$ at which the smallest mean squared error (MSE) is achieved.
+```{r}
+## s: Value(s) of the penalty parameter ‘lambda’ at which
+##    predictions are required. Default is the entire sequence used
+##    to create the model.
+lasso_coef <- coef(cv_lasso, s = cv_lasso$lambda.min)
+```
+
+### Question 2 
+Create the Adaptive Weights $\hat{w_j}$ for $\gamma = 0.5, 1$ and 2. Choose the best $\lambda$ through 10-fold cross validation.
+
+The procedure I pursue is as following: 
+
+\begin{enumerate}
+\item Using initial estimates of $b_{j}^{in}$ derived in Qeustion 1, I Construct $w$ (adaptive weights) by adjusting the \verb|lasso_coef| using 3 three different choices for $\gamma$. For this purpose, I define a function \verb|weight_func| which constructs adaptive weights given $\gamma$ and $b$, and I make sure it doesn't contain $\infty$ as a value.
+
+
+\item We define the function \verb|alasso_cv_gamma| which takes $\gamma$ as its only argument and builds a 10-fold cross-validation adaptive lasso model using adaptive weights that are created based on $\gamma$.
+
+\item We compare the three models defines in step 2 in order to find the $\gamma$ that leads to the "best" model, i.e., the model that has the $\lambda$ that leads to the least mse loss.
+
+\item As the ultimate goal is to find the best $\lambda$, I create my final cross-validation model with the best $\gamma$, and output the best $\lambda$. Moreover, I report the coefficients' estimates.
+
+\item For the purpose of illustration, I plot values of coefficients for two model variations, i.e., simple lasso and adaptive lasso. Finally, I plot the lambda choices of the cross-validation model.
+\end{enumerate}
+
+
+  
+
+
+### Step 1: Construct Adaptive Weights
+
+```{r}
+#best_lasso_coef <- as.numeric(coef(cv_lasso, s = #cv_lasso$lambda.min))[-1]
+
+## constructing w which consists of adaptive weights
+## The intercept estimate should be dropped.
+p <- nrow(lasso_coef)-1 
+b <- lasso_coef[1:p]
+weight_func <- function(x,gamma){
+  1/(abs(x)**gamma)
+}
+gamma <- c(1/2,1,2)
+adap_weights <- sapply(b, weight_func,gamma[2])
+adap_weights
+# Replacing values estimated as Infinite for 999999999
+adap_weights[adap_weights == Inf] <- 999999999 
+```
+
+### Step 2: Define the function alasso_cv_gamma 
+
+```{r}
+alasso_cv_gamma <- function(gamma) {
+    adap_weights <- sapply(b, weight_func, gamma)
+    adap_weights[adap_weights == Inf] <- 999999999 
+    alasso_cv <- cv.glmnet(X,y,nfold = 10,alpha = 1,penalty.factor = adap_weights,keep = TRUE)
+    y_pred <- predict(alasso_cv, newx = X, s = alasso_cv$lambda.min)
+    return(y_pred)
+}
+```
+
+
+### Step 3: Find the best gamma
+
+```{r}
+## create a dictionary with keys as gamma and values as MSE
+dict = c()
+keys = c()
+for (g in gamma)
+{
+  keys <- append(keys, as.numeric(g))
+  y_pred <- alasso_cv_gamma(g)
+  mse <- mean((y_pred - y)^2)
+  dict[sprintf("%f",as.numeric(g))] <- as.numeric(mse)
+  
+}
+
+gamma_best <- keys[which.min(dict)]
+dict
+```
+### Step 4: Report the best labmda and coefficients' estimates
+
+```{r}
+
+adap_weights <- sapply(b, weight_func, gamma_best)
+adap_weights[adap_weights == Inf] <- 999999999 
+alasso_cv_best <- cv.glmnet(X,y, nfold = 10, alpha = 1, penalty.factor = adap_weights, keep = TRUE)
+y_pred <- predict(alasso_cv_best, newx = X, s = alasso_cv_best$lambda.min)
+
+
+
+#obtain the minimum lambda
+alasso_cv_best$lambda.min
+
+#obtain the corresponding coefficients
+coef(alasso_cv_best, s = alasso_cv_best$lambda.min)
+
+```
+
+
+### Step 5: Plotting the estimations of the coefficients for all models
+
+```{r}
+
+model_lasso <- glmnet(features, df$lpsa, alpha = 1)
+alasso <- glmnet(features, df$lpsa, alpha = 1, penalty.factor = adap_weights)
+plot(model_lasso)
+```
+
+
+```{r}
+plot(alasso)
+```
+
+```{r}
+
+## Penalty vs CV MSE plot
+plot(alasso_cv_best)
+
+```
+
+
+
+### Question 3: 
+Use the glmnet function to execute the adaptive Lasso. Plot the area under ROC (receiver operating characteristic) curve, also called AUC, and report the values of minimum $\lambda$ (obtained for miminum AUC).
+
+
+We discretize the target variable (ibsa), i.e., convert it from continous type to discrete one so as to use the metric AUC (since it is a classification metric). We do the same for the predictions. THen, we can compare them using AUC metric. Finally, we plot the ROC-AUC curve.
+
+### Step 1: Descretize the target variable (ibsa)
+```{r}
+y_disc <- as.integer(discretize(y, breaks = 2, labels=c(0, 1)))
+y_pred_disc <- as.integer(discretize(y_pred, breaks = 2, labels=c(0, 1)))
+
+
+```
+
+### Step 2: Calculate AUC 
+```{r}
+## Extract predicted probabilities and observed outcomes.
+## pROC for ROC construction
+roc <- pROC::roc(y_disc ~ y_pred_disc)
+auc <- auc(y_disc, y_pred)
+auc
+
+```
+### Step 3: Plot ROC-AUC Curve
+```{r}
+
+## Plot an ROC curve with AUC and threshold
+plot(roc, print.auc = TRUE, print.thres = TRUE, print.thres.best.method = "youden")
+```
